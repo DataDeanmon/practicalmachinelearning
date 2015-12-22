@@ -1,0 +1,131 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "DataDeanmon"
+date: "22 December 2015"
+output: html_document
+---
+
+##Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. 
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, data from accelerometers on the belt, forearm, arm, and dumbell was collected from 6 participants that were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+This report summarises the process taken to develop a predictive model to identify the type of exercise performed by the six subjects, using the data collected from the accelerometers.  
+
+More information on the Weight Lifting Exercise Dataset is available from: [http://groupware.les.inf.puc-rio.br/har].
+
+##Data sourcing
+
+This section loads the libraries used in the analysis and reads the training and test datasets.
+```{r readdata, echo = TRUE, warning=FALSE}
+library(dplyr)
+library(caret)
+library(randomForest)
+library(rpart)
+library(corrplot)
+library(GGally)
+
+url1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+training <- read.csv(url1)
+testing <- read.csv(url2)
+```
+
+##Data cleansing
+
+Before proceeding, the training dataset has been partitioned into training and testing/validation sets. Additionally, a number of variables have been removed from the training set. These are:  
+- variables with significant amounts of missing values  
+- timestamp and num_window varibles which are unlikely to contribute to the predictive model  
+- X variable denoting row number  
+
+```{r cleansing, echo = TRUE}
+set.seed(1298)
+
+inTrain <- createDataPartition(y = training$classe, p = 0.7, list = FALSE)
+trainset <- training[inTrain,]
+testset <- training[-inTrain,]
+
+#select numerics only
+NewTrain <- trainset[, sapply(X = trainset, is.numeric)]
+
+#remove columns with lots of NAs
+NewTrain <- NewTrain[, sapply(X = NewTrain, function(x) !any(is.na(x)))]
+
+#remove Timestamp
+NewTrain <- NewTrain[, -grep("^raw_timestamp*", names(NewTrain))]
+
+#remove X column
+NewTrain <- NewTrain[, -1]
+
+#remove num_window
+NewTrain <- NewTrain[, -1]
+
+#add classe back in
+classe <- trainset$classe
+NewTrain <- cbind(NewTrain, classe)
+
+#add username back in
+user_name <- as.factor(trainset$user_name)
+NewTrain <- cbind(user_name, NewTrain)
+```
+
+##Training the model
+
+We are supporting the model training by applying additional cross validation on the training set with five repeats. Cross validation will assist in assessing the accuracy and validity of the model. 
+
+Random forest has been selected as the method, as it generally performs well, is able to identify the variables of most importance and is suited to this classification based problem.  
+
+```{r training, echo = TRUE}
+ctrl <- trainControl(method = "cv",
+                     repeats = 5)
+
+modelFit <- train(as.factor(classe) ~ ., 
+                   data = NewTrain, 
+                   trControl = ctrl,
+                   method = "rf",
+                   ntree = 100)
+                   
+modelFit
+varImp(modelFit)
+plot(modelFit$finalModel)
+```
+
+##Testing the model
+
+This step applies the model obtained through training to the test set that was partitioned for evaluating the model and out of sample error. 
+
+```{r testing, echo = TRUE}
+predictions <- predict(modelFit, newdata = testset)
+confusionMatrix(predictions, testset$classe)
+```
+
+With an accuracy reported as **99.42%** (**99.15-99.96%** at **95% confidence interval**), we can be confident with the performance of the model and can state that the out of sample error (100% - 99.42% = **0.58%**) is very low. Therefore, we can now proceed with applying the model to the 20 test cases in the "testing" set.
+
+##Predicting the 20 test cases
+This final step applies the model to the 20 remaining test cases, which can then be submitted for evaluation.
+
+```{r testcases, echo = TRUE}
+predictions <- predict(modelFit, newdata = testing)
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+
+pml_write_files(predictions)
+```
+
+##Appendix
+
+These plots illustrate some of the relationships in the dataset that assist interpreting the predictive model.
+
+```{r corrplot, echo = TRUE, warning= FALSE}
+CorrPlot <- NewTrain %>%
+        select(-user_name, -classe)
+CorrPlot <- cor(CorrPlot)
+corrplot(CorrPlot, method = "ellipse", order = "FPC", tl.cex = 0.5)
+```
